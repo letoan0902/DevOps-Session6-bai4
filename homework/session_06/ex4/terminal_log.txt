@@ -1,0 +1,396 @@
+# Log phiên làm việc - Bài 4, Session 06 (2026-10-06)
+# Máy cá nhân: Windows, Git Bash, IP công cộng 113.161.72.19
+# Máy chủ: halo (103.116.104.228), user devops, cổng SSH 2222
+
+# ===== Phần 1: Đăng nhập và kiểm tra môi trường =====
+
+$ ssh -p 2222 -i ~/.ssh/id_ed25519_ptit_s02 devops@103.116.104.228
+Welcome to Ubuntu 24.04.3 LTS (GNU/Linux 6.8.0-87-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Tue Oct  6 09:10:14 +07 2026
+
+  System load:  0.01               Processes:             119
+  Usage of /:   31.2% of 38.70GB   Users logged in:       0
+  Memory usage: 13%                IPv4 address for eth0: 103.116.104.228
+  Swap usage:   0%
+
+
+Expanded Security Maintenance for Applications is not enabled.
+
+0 updates can be applied immediately.
+
+Enable ESM Apps to receive additional future security updates.
+See https://ubuntu.com/esm or run: sudo pro status
+
+
+Last login: Mon Oct  5 21:42:17 2026 from 113.161.72.19
+devops@halo:~$ whoami
+devops
+devops@halo:~$ hostname
+halo
+devops@halo:~$ date
+Tue Oct  6 09:10:52 AM +07 2026
+devops@halo:~$ uname -r
+6.8.0-87-generic
+devops@halo:~$ lsb_release -d
+Description:	Ubuntu 24.04.3 LTS
+devops@halo:~$ bash --version | head -n 1
+GNU bash, version 5.2.21(1)-release (x86_64-pc-linux-gnu)
+devops@halo:~$ ps --version
+ps from procps-ng 4.0.4
+devops@halo:~$ type nohup
+nohup is /usr/bin/nohup
+devops@halo:~$ nohup --version | head -n 1
+nohup (GNU coreutils) 9.4
+devops@halo:~$ tty
+/dev/pts/0
+devops@halo:~$ echo $$
+48202
+devops@halo:~$ cd ~/scripts
+devops@halo:~/scripts$ pwd
+/home/devops/scripts
+
+# ===== Phần 2: Tạo script, cấp quyền thực thi =====
+
+devops@halo:~/scripts$ cat << 'EOF' > loop-monitor.sh
+> #!/bin/bash
+> while true; do
+>     echo "System time: $(date)" >> /tmp/monitor.log
+>     sleep 5
+> done
+> EOF
+devops@halo:~/scripts$ cat loop-monitor.sh
+#!/bin/bash
+while true; do
+    echo "System time: $(date)" >> /tmp/monitor.log
+    sleep 5
+done
+devops@halo:~/scripts$ ls -l loop-monitor.sh
+-rw-rw-r-- 1 devops devops 96 Oct  6 09:12 loop-monitor.sh
+devops@halo:~/scripts$ bash -n loop-monitor.sh; echo "exit=$?"
+exit=0
+devops@halo:~/scripts$ ./loop-monitor.sh
+bash: ./loop-monitor.sh: Permission denied
+devops@halo:~/scripts$ chmod +x loop-monitor.sh
+devops@halo:~/scripts$ ls -l loop-monitor.sh
+-rwxrwxr-x 1 devops devops 96 Oct  6 09:12 loop-monitor.sh
+devops@halo:~/scripts$ ls -l /tmp/monitor.log
+ls: cannot access '/tmp/monitor.log': No such file or directory
+
+# ===== Phần 3: Khởi chạy nền bằng nohup =====
+
+devops@halo:~/scripts$ nohup ./loop-monitor.sh > /dev/null 2>&1 &
+[1] 48317
+devops@halo:~/scripts$ echo $!
+48317
+devops@halo:~/scripts$ jobs -l
+[1]+ 48317 Running                 nohup ./loop-monitor.sh > /dev/null 2>&1 &
+devops@halo:~/scripts$ ls nohup.out
+ls: cannot access 'nohup.out': No such file or directory
+devops@halo:~/scripts$ cat /tmp/monitor.log
+System time: Tue Oct  6 09:16:41 AM +07 2026
+System time: Tue Oct  6 09:16:46 AM +07 2026
+System time: Tue Oct  6 09:16:51 AM +07 2026
+System time: Tue Oct  6 09:16:56 AM +07 2026
+
+# ===== Phần 4: Tìm PID =====
+
+devops@halo:~/scripts$ pgrep -f loop-monitor.sh
+48317
+devops@halo:~/scripts$ pgrep -af loop-monitor.sh
+48317 /bin/bash ./loop-monitor.sh
+devops@halo:~/scripts$ ps aux | grep loop-monitor.sh
+devops     48317  0.0  0.0   7372  3200 pts/0    S    09:16   0:00 /bin/bash ./loop-monitor.sh
+devops     48359  0.0  0.0   9144  2304 pts/0    S+   09:18   0:00 grep --color=auto loop-monitor.sh
+devops@halo:~/scripts$ ps aux | grep "[l]oop-monitor.sh"
+devops     48317  0.0  0.0   7372  3200 pts/0    S    09:16   0:00 /bin/bash ./loop-monitor.sh
+devops@halo:~/scripts$ ps -ef | grep "[l]oop-monitor"
+devops     48317   48202  0 09:16 pts/0    00:00:00 /bin/bash ./loop-monitor.sh
+devops@halo:~/scripts$ ps -o pid,ppid,pgid,sid,tty,stat,etime,cmd -p 48317
+    PID    PPID    PGID     SID TTY      STAT     ELAPSED CMD
+  48317   48202   48317   48202 pts/0    S          02:16 /bin/bash ./loop-monitor.sh
+devops@halo:~/scripts$ pstree -p -A 48317
+loop-monitor.sh(48317)---sleep(48402)
+devops@halo:~/scripts$ pstree -s -p -A 48317
+systemd(1)---sshd(971)---sshd(48190)---sshd(48201)---bash(48202)---loop-monitor.sh(48317)---sleep(48408)
+
+# ===== Phần 5: Giám sát bằng top và tail =====
+
+devops@halo:~/scripts$ top -b -n 1 -p 48317
+top - 09:19:52 up 12 days,  3:41,  1 user,  load average: 0.00, 0.01, 0.00
+Tasks:   1 total,   0 running,   1 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  0.6 us,  0.4 sy,  0.0 ni, 98.7 id,  0.2 wa,  0.0 hi,  0.1 si,  0.0 st
+MiB Mem :   7937.4 total,   5412.8 free,   1021.6 used,   1503.0 buff/cache
+MiB Swap:   2048.0 total,   2048.0 free,      0.0 used.   6915.8 avail Mem
+
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+  48317 devops    20   0    7372   3200   2944 S   0.0   0.0   0:00.06 loop-monitor.sh
+devops@halo:~/scripts$ tail -n 10 /tmp/monitor.log
+System time: Tue Oct  6 09:19:51 AM +07 2026
+System time: Tue Oct  6 09:19:56 AM +07 2026
+System time: Tue Oct  6 09:20:01 AM +07 2026
+System time: Tue Oct  6 09:20:06 AM +07 2026
+System time: Tue Oct  6 09:20:11 AM +07 2026
+System time: Tue Oct  6 09:20:16 AM +07 2026
+System time: Tue Oct  6 09:20:21 AM +07 2026
+System time: Tue Oct  6 09:20:26 AM +07 2026
+System time: Tue Oct  6 09:20:31 AM +07 2026
+System time: Tue Oct  6 09:20:36 AM +07 2026
+devops@halo:~/scripts$ wc -l /tmp/monitor.log
+50 /tmp/monitor.log
+devops@halo:~/scripts$ tail -f /tmp/monitor.log
+System time: Tue Oct  6 09:20:21 AM +07 2026
+System time: Tue Oct  6 09:20:26 AM +07 2026
+System time: Tue Oct  6 09:20:31 AM +07 2026
+System time: Tue Oct  6 09:20:36 AM +07 2026
+System time: Tue Oct  6 09:20:41 AM +07 2026
+System time: Tue Oct  6 09:20:46 AM +07 2026
+System time: Tue Oct  6 09:20:51 AM +07 2026
+System time: Tue Oct  6 09:20:56 AM +07 2026
+System time: Tue Oct  6 09:21:01 AM +07 2026
+System time: Tue Oct  6 09:21:06 AM +07 2026
+System time: Tue Oct  6 09:21:11 AM +07 2026
+System time: Tue Oct  6 09:21:16 AM +07 2026
+System time: Tue Oct  6 09:21:21 AM +07 2026
+^C
+
+# ===== Phần 6: Ngắt SSH và đăng nhập lại =====
+
+devops@halo:~/scripts$ date; pgrep -f loop-monitor.sh; wc -l /tmp/monitor.log
+Tue Oct  6 09:21:58 AM +07 2026
+48317
+64 /tmp/monitor.log
+devops@halo:~/scripts$ jobs
+[1]+  Running                 nohup ./loop-monitor.sh > /dev/null 2>&1 &
+devops@halo:~/scripts$ exit
+logout
+Connection to 103.116.104.228 closed.
+$ date '+%F %T'
+2026-10-06 09:22:19
+$ sleep 120
+$ date '+%F %T'
+2026-10-06 09:24:27
+$ ssh -p 2222 -i ~/.ssh/id_ed25519_ptit_s02 devops@103.116.104.228
+Welcome to Ubuntu 24.04.3 LTS (GNU/Linux 6.8.0-87-generic x86_64)
+
+ * Documentation:  https://help.ubuntu.com
+ * Management:     https://landscape.canonical.com
+ * Support:        https://ubuntu.com/pro
+
+ System information as of Tue Oct  6 09:24:33 +07 2026
+
+  System load:  0.00               Processes:             121
+  Usage of /:   31.2% of 38.70GB   Users logged in:       0
+  Memory usage: 13%                IPv4 address for eth0: 103.116.104.228
+  Swap usage:   0%
+
+
+Expanded Security Maintenance for Applications is not enabled.
+
+0 updates can be applied immediately.
+
+Enable ESM Apps to receive additional future security updates.
+See https://ubuntu.com/esm or run: sudo pro status
+
+
+Last login: Tue Oct  6 09:10:14 2026 from 113.161.72.19
+devops@halo:~$ echo $$
+48601
+devops@halo:~$ jobs
+devops@halo:~$ pgrep -af loop-monitor.sh
+48317 /bin/bash ./loop-monitor.sh
+devops@halo:~$ grep SigIgn /proc/48317/status
+SigIgn:	0000000000000001
+devops@halo:~$ ps -o pid,ppid,tty,stat,etime,cmd -p 48317
+    PID    PPID TTY      STAT     ELAPSED CMD
+  48317       1 ?        S          08:29 /bin/bash ./loop-monitor.sh
+devops@halo:~$ pstree -s -p -A 48317
+systemd(1)---loop-monitor.sh(48317)---sleep(48627)
+devops@halo:~$ wc -l /tmp/monitor.log
+108 /tmp/monitor.log
+devops@halo:~$ tail -n 10 /tmp/monitor.log
+System time: Tue Oct  6 09:24:56 AM +07 2026
+System time: Tue Oct  6 09:25:01 AM +07 2026
+System time: Tue Oct  6 09:25:06 AM +07 2026
+System time: Tue Oct  6 09:25:11 AM +07 2026
+System time: Tue Oct  6 09:25:16 AM +07 2026
+System time: Tue Oct  6 09:25:21 AM +07 2026
+System time: Tue Oct  6 09:25:26 AM +07 2026
+System time: Tue Oct  6 09:25:31 AM +07 2026
+System time: Tue Oct  6 09:25:36 AM +07 2026
+System time: Tue Oct  6 09:25:41 AM +07 2026
+devops@halo:~$ sed -n '63,70p' /tmp/monitor.log
+System time: Tue Oct  6 09:21:51 AM +07 2026
+System time: Tue Oct  6 09:21:56 AM +07 2026
+System time: Tue Oct  6 09:22:01 AM +07 2026
+System time: Tue Oct  6 09:22:06 AM +07 2026
+System time: Tue Oct  6 09:22:11 AM +07 2026
+System time: Tue Oct  6 09:22:16 AM +07 2026
+System time: Tue Oct  6 09:22:21 AM +07 2026
+System time: Tue Oct  6 09:22:26 AM +07 2026
+devops@halo:~$ loginctl show -p KillUserProcesses
+KillUserProcesses=no
+
+# ===== Phần 7: Tắt an toàn bằng SIGTERM =====
+
+devops@halo:~$ ps aux | grep loop-monitor.sh
+devops     48317  0.0  0.0   7372  3200 ?        S    09:16   0:00 /bin/bash ./loop-monitor.sh
+devops     48689  0.0  0.0   9144  2304 pts/0    S+   09:27   0:00 grep --color=auto loop-monitor.sh
+devops@halo:~$ kill -15 48317
+devops@halo:~$ echo $?
+0
+devops@halo:~$ ps -ef | grep "[s]leep 5"
+devops     48703       1  0 09:27 ?        00:00:00 sleep 5
+devops@halo:~$ ps aux | grep loop-monitor.sh
+devops     48715  0.0  0.0   9144  2304 pts/0    S+   09:27   0:00 grep --color=auto loop-monitor.sh
+devops@halo:~$ pgrep -f loop-monitor.sh; echo "exit=$?"
+exit=1
+devops@halo:~$ wc -l /tmp/monitor.log
+134 /tmp/monitor.log
+devops@halo:~$ sleep 10; wc -l /tmp/monitor.log
+134 /tmp/monitor.log
+devops@halo:~$ tail -n 3 /tmp/monitor.log
+System time: Tue Oct  6 09:27:36 AM +07 2026
+System time: Tue Oct  6 09:27:41 AM +07 2026
+System time: Tue Oct  6 09:27:46 AM +07 2026
+
+# ===== Phần 8: Khi SIGTERM không tắt được - dùng SIGKILL =====
+
+devops@halo:~$ cd ~/scripts
+devops@halo:~/scripts$ cat << 'EOF' > loop-monitor-stubborn.sh
+> #!/bin/bash
+> # Biến thể dùng để thử nghiệm: bỏ qua SIGTERM nên kill -15 không có tác dụng
+> trap '' TERM
+> while true; do
+>     echo "System time: $(date)" >> /tmp/monitor.log
+>     sleep 5
+> done
+> EOF
+devops@halo:~/scripts$ chmod +x loop-monitor-stubborn.sh
+devops@halo:~/scripts$ ls -l loop-monitor-stubborn.sh
+-rwxrwxr-x 1 devops devops 206 Oct  6 09:29 loop-monitor-stubborn.sh
+devops@halo:~/scripts$ bash -n loop-monitor-stubborn.sh; echo "exit=$?"
+exit=0
+devops@halo:~/scripts$ nohup ./loop-monitor-stubborn.sh > /dev/null 2>&1 &
+[1] 48775
+devops@halo:~/scripts$ pgrep -af loop-monitor-stubborn.sh
+48775 /bin/bash ./loop-monitor-stubborn.sh
+devops@halo:~/scripts$ grep SigIgn /proc/48775/status
+SigIgn:	0000000000004001
+devops@halo:~/scripts$ kill -15 48775
+devops@halo:~/scripts$ echo $?
+0
+devops@halo:~/scripts$ ps -o pid,ppid,stat,etime,cmd -p 48775
+    PID    PPID STAT     ELAPSED CMD
+  48775   48601 S          01:00 /bin/bash ./loop-monitor-stubborn.sh
+devops@halo:~/scripts$ sleep 10; ps -o pid,ppid,stat,etime,cmd -p 48775
+    PID    PPID STAT     ELAPSED CMD
+  48775   48601 S          01:22 /bin/bash ./loop-monitor-stubborn.sh
+devops@halo:~/scripts$ kill -9 48775
+[1]+  Killed                  nohup ./loop-monitor-stubborn.sh > /dev/null 2>&1
+devops@halo:~/scripts$ ps -o pid,stat,etime,cmd -p 48775
+    PID STAT     ELAPSED CMD
+devops@halo:~/scripts$ ps -ef | grep "[s]leep 5"
+devops     48831       1  0 09:31 ?        00:00:00 sleep 5
+devops@halo:~/scripts$ pgrep -af "sleep 5"; echo "exit=$?"
+exit=1
+devops@halo:~/scripts$ tail -n 3 /tmp/monitor.log
+System time: Tue Oct  6 09:31:32 AM +07 2026
+System time: Tue Oct  6 09:31:37 AM +07 2026
+System time: Tue Oct  6 09:31:42 AM +07 2026
+
+# ===== Phần 9: Danh sách tín hiệu =====
+
+devops@halo:~/scripts$ kill -l
+ 1) SIGHUP	 2) SIGINT	 3) SIGQUIT	 4) SIGILL	 5) SIGTRAP
+ 6) SIGABRT	 7) SIGBUS	 8) SIGFPE	 9) SIGKILL	10) SIGUSR1
+11) SIGSEGV	12) SIGUSR2	13) SIGPIPE	14) SIGALRM	15) SIGTERM
+16) SIGSTKFLT	17) SIGCHLD	18) SIGCONT	19) SIGSTOP	20) SIGTSTP
+21) SIGTTIN	22) SIGTTOU	23) SIGURG	24) SIGXCPU	25) SIGXFSZ
+26) SIGVTALRM	27) SIGPROF	28) SIGWINCH	29) SIGIO	30) SIGPWR
+31) SIGSYS	34) SIGRTMIN	35) SIGRTMIN+1	36) SIGRTMIN+2	37) SIGRTMIN+3
+38) SIGRTMIN+4	39) SIGRTMIN+5	40) SIGRTMIN+6	41) SIGRTMIN+7	42) SIGRTMIN+8
+43) SIGRTMIN+9	44) SIGRTMIN+10	45) SIGRTMIN+11	46) SIGRTMIN+12	47) SIGRTMIN+13
+48) SIGRTMIN+14	49) SIGRTMIN+15	50) SIGRTMAX-14	51) SIGRTMAX-13	52) SIGRTMAX-12
+53) SIGRTMAX-11	54) SIGRTMAX-10	55) SIGRTMAX-9	56) SIGRTMAX-8	57) SIGRTMAX-7
+58) SIGRTMAX-6	59) SIGRTMAX-5	60) SIGRTMAX-4	61) SIGRTMAX-3	62) SIGRTMAX-2
+63) SIGRTMAX-1	64) SIGRTMAX	
+devops@halo:~/scripts$ kill -l 15
+TERM
+devops@halo:~/scripts$ kill -l 9
+KILL
+devops@halo:~/scripts$ kill -l KILL
+9
+
+# ===== Phần 10: Bản cải tiến có trap và file PID =====
+
+devops@halo:~/scripts$ cat << 'EOF' > loop-monitor-graceful.sh
+> #!/bin/bash
+> # loop-monitor-graceful.sh - bản cải tiến của loop-monitor.sh
+> # - Ghi PID vào /tmp/loop-monitor.pid để lần sau dừng đúng tiến trình, không phải đoán PID.
+> # - Bắt SIGTERM và SIGINT: ghi dòng "stopped" vào log, xóa file PID rồi mới thoát.
+> # Lưu ý: SIGKILL (9) và SIGSTOP (19) không thể bắt nên script không xử lý được.
+>
+> LOG=/tmp/monitor.log
+> PIDFILE=/tmp/loop-monitor.pid
+> SLEEP_PID=""
+>
+> cleanup() {
+>     [ -n "$SLEEP_PID" ] && kill "$SLEEP_PID" 2>/dev/null
+>     echo "System time: $(date) - stopped by signal $1 (PID $$)" >> "$LOG"
+>     rm -f "$PIDFILE"
+>     exit 0
+> }
+> trap 'cleanup TERM' TERM
+> trap 'cleanup INT' INT
+>
+> echo $$ > "$PIDFILE"
+> echo "System time: $(date) - started (PID $$)" >> "$LOG"
+>
+> while true; do
+>     echo "System time: $(date)" >> "$LOG"
+>     # Chạy sleep ở nền rồi wait, để trap được xử lý ngay thay vì chờ hết 5 giây.
+>     sleep 5 &
+>     SLEEP_PID=$!
+>     wait "$SLEEP_PID"
+> done
+> EOF
+devops@halo:~/scripts$ chmod +x loop-monitor-graceful.sh
+devops@halo:~/scripts$ ls -l loop-monitor-graceful.sh
+-rwxrwxr-x 1 devops devops 974 Oct  6 09:33 loop-monitor-graceful.sh
+devops@halo:~/scripts$ bash -n loop-monitor-graceful.sh; echo "exit=$?"
+exit=0
+devops@halo:~/scripts$ nohup ./loop-monitor-graceful.sh > /dev/null 2>&1 &
+[1] 48903
+devops@halo:~/scripts$ cat /tmp/loop-monitor.pid
+48903
+devops@halo:~/scripts$ tail -n 4 /tmp/monitor.log
+System time: Tue Oct  6 09:34:20 AM +07 2026 - started (PID 48903)
+System time: Tue Oct  6 09:34:20 AM +07 2026
+System time: Tue Oct  6 09:34:25 AM +07 2026
+System time: Tue Oct  6 09:34:30 AM +07 2026
+devops@halo:~/scripts$ kill -15 $(cat /tmp/loop-monitor.pid)
+[1]+  Done                    nohup ./loop-monitor-graceful.sh > /dev/null 2>&1
+devops@halo:~/scripts$ tail -n 4 /tmp/monitor.log
+System time: Tue Oct  6 09:34:35 AM +07 2026
+System time: Tue Oct  6 09:34:40 AM +07 2026
+System time: Tue Oct  6 09:34:45 AM +07 2026
+System time: Tue Oct  6 09:34:47 AM +07 2026 - stopped by signal TERM (PID 48903)
+devops@halo:~/scripts$ ls /tmp/loop-monitor.pid
+ls: cannot access '/tmp/loop-monitor.pid': No such file or directory
+devops@halo:~/scripts$ pgrep -af "sleep 5"; echo "exit=$?"
+exit=1
+
+# ===== Phần 11: Kiểm tra cuối và đăng xuất =====
+
+devops@halo:~/scripts$ pgrep -af loop-monitor; echo "exit=$?"
+exit=1
+devops@halo:~/scripts$ ps aux | grep "[l]oop-monitor"
+devops@halo:~/scripts$ exit
+logout
+Connection to 103.116.104.228 closed.
+$
